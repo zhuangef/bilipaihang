@@ -95,7 +95,8 @@ class BiliClient:
             pn += 1
         return members
 
-    def get_up_videos(self, mid: int, page_size: int = 50) -> list[dict[str, Any]]:
+    def get_up_videos(self, mid: int, page_size: int = 50, stop_before_ts: int | None = None) -> list[dict[str, Any]]:
+        """Return UP videos in publish-date order, optionally stopping before a timestamp."""
         videos: list[dict[str, Any]] = []
         pn = 1
         while True:
@@ -107,7 +108,16 @@ class BiliClient:
             vlist = data.get("list", {}).get("vlist", [])
             if not vlist:
                 break
-            videos.extend(vlist)
+            should_stop = False
+            for video in vlist:
+                pubdate = int(video.get("created") or video.get("pubdate") or 0)
+                if stop_before_ts and pubdate and pubdate < stop_before_ts:
+                    should_stop = True
+                    break
+                videos.append(video)
+            if should_stop:
+                LOGGER.info("stop fetching UP %s videos at page %s because pubdate is before start_date", mid, pn)
+                break
             page = data.get("page", {})
             total = int(page.get("count", 0) or 0)
             if pn * page_size >= total or len(vlist) < page_size:
