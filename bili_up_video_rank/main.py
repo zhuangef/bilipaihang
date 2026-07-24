@@ -82,10 +82,13 @@ def main() -> None:
     if args.reset and STATE_FILE.exists():
         STATE_FILE.unlink()
 
-    state = read_json(STATE_FILE, {"done_up_mids": [], "videos": []})
+    state = read_json(STATE_FILE, {"done_up_mids": [], "videos": [], "traversed_videos": []})
     done_up_mids = set(state.get("done_up_mids", []))
     rows: list[dict[str, Any]] = state.get("videos", [])
+    traversed_rows: list[dict[str, Any]] = state.get("traversed_videos", rows.copy())
     seen_bvids = {row.get("bvid") for row in rows}
+    seen_traversed_bvids = {row.get("bvid") for row in traversed_rows}
+    start_ts = parse_date_to_ts(args.start_date)
 
     client = BiliClient(args.cookie, settings.cache_dir, settings.cache_ttl_seconds, settings.request_interval, settings.retry_times, settings.retry_backoff)
     ups = client.get_follow_group_members(args.group_id, settings.page_size)
@@ -96,22 +99,25 @@ def main() -> None:
         if not mid or mid in done_up_mids:
             continue
         LOGGER.info("fetching videos for UP %s (%s)", up.get("uname") or up.get("name"), mid)
-        for video in client.get_up_videos(mid, settings.page_size):
+        for video in client.get_up_videos(mid, settings.page_size, stop_before_ts=start_ts):
             bvid = video.get("bvid")
-            if not bvid or bvid in seen_bvids:
+            if not bvid or bvid in seen_traversed_bvids:
                 continue
             detail = client.get_video_detail(bvid)
             row = normalize_video(detail, video, up)
+            if bvid not in seen_traversed_bvids:
+                traversed_rows.append(row)
+                seen_traversed_bvids.add(bvid)
             if pass_filters(row, args):
                 rows.append(row)
-            seen_bvids.add(bvid)
+                seen_bvids.add(bvid)
         done_up_mids.add(mid)
-        write_json(STATE_FILE, {"done_up_mids": sorted(done_up_mids), "videos": rows})
+        write_json(STATE_FILE, {"done_up_mids": sorted(done_up_mids), "videos": rows, "traversed_videos": traversed_rows})
 
     sort_desc = False if args.asc else settings.sort_desc
     rows.sort(key=lambda row: row.get(args.sort_by) or 0, reverse=sort_desc)
-    export_all(rows, settings.output_dir)
-    write_json(STATE_FILE, {"done_up_mids": sorted(done_up_mids), "videos": rows})
+    export_all(rows, settings.output_dir, traversed_rows)
+    write_json(STATE_FILE, {"done_up_mids": sorted(done_up_mids), "videos": rows, "traversed_videos": traversed_rows})
     LOGGER.info("exported %s videos to %s", len(rows), settings.output_dir)
 
 

@@ -56,13 +56,15 @@ def build_up_stats(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return sorted(stats.values(), key=lambda item: item["view"], reverse=True)
 
 
-def export_all(rows: list[dict[str, Any]], output_dir: Path) -> None:
+def export_all(rows: list[dict[str, Any]], output_dir: Path, traversed_rows: list[dict[str, Any]] | None = None) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     write_json(output_dir / "all_video.json", rows)
     write_csv(output_dir / "all_video.csv", rows, FIELDS)
 
     excel_rows = sanitize_excel_rows(rows)
+    traversed_excel_rows = sanitize_excel_rows(traversed_rows if traversed_rows is not None else rows)
     with pd.ExcelWriter(output_dir / "all_video.xlsx", engine="openpyxl") as writer:
         pd.DataFrame(excel_rows, columns=FIELDS).to_excel(writer, sheet_name="全部视频", index=False)
+        pd.DataFrame(traversed_excel_rows, columns=FIELDS).to_excel(writer, sheet_name="遍历视频", index=False)
         pd.DataFrame(build_year_stats(excel_rows)).to_excel(writer, sheet_name="按年度统计", index=False)
         pd.DataFrame(build_up_stats(excel_rows)).to_excel(writer, sheet_name="每个UP统计", index=False)
