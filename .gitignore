@@ -1,0 +1,10 @@
+__pycache__/
+*.py[cod]
+.venv/
+.env
+bili_up_video_rank/cache/*.json
+bili_up_video_rank/logs/*.log
+bili_up_video_rank/output/*
+!bili_up_video_rank/cache/.gitkeep
+!bili_up_video_rank/logs/.gitkeep
+!bili_up_video_rank/output/.gitkeep
