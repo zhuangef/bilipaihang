@@ -121,8 +121,8 @@ def export_all(rows: list[dict[str, Any]], output_dir: Path, traversed_rows: lis
     traversed_excel_rows = sanitize_excel_rows(traversed_rows if traversed_rows is not None else rows)
     with pd.ExcelWriter(output_dir / "all_video.xlsx", engine="openpyxl") as writer:
         pd.DataFrame(excel_rows, columns=FIELDS).to_excel(writer, sheet_name="全部视频", index=False)
-        for sheet_name, up_rows in build_up_video_sheets(traversed_excel_rows):
-            pd.DataFrame(up_rows, columns=FIELDS).to_excel(writer, sheet_name=sheet_name, index=False)
         pd.DataFrame(build_year_stats(excel_rows)).to_excel(writer, sheet_name="按年度统计", index=False)
         pd.DataFrame(build_up_stats(excel_rows)).to_excel(writer, sheet_name="每个UP统计", index=False)
+        for sheet_name, up_rows in build_up_video_sheets(traversed_excel_rows):
+            pd.DataFrame(up_rows, columns=FIELDS).to_excel(writer, sheet_name=sheet_name, index=False)
         autofit_excel_columns(writer)
