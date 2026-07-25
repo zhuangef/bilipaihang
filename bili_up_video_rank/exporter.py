@@ -4,9 +4,11 @@ from __future__ import annotations
 from collections import defaultdict
 from pathlib import Path
 import re
+import unicodedata
 from typing import Any
 
 import pandas as pd
+from openpyxl.utils import get_column_letter
 
 from utils import write_csv, write_json
 
@@ -21,6 +23,9 @@ FIELDS = [
 ILLEGAL_EXCEL_CHARACTERS_RE = re.compile(r"[\x00-\x08\x0b-\x0c\x0e-\x1f]")
 INVALID_EXCEL_SHEET_NAME_RE = re.compile(r"[\\/*?:\[\]]")
 MAX_EXCEL_SHEET_NAME_LENGTH = 31
+MIN_EXCEL_COLUMN_WIDTH = 8
+MAX_EXCEL_COLUMN_WIDTH = 80
+EXCEL_COLUMN_PADDING = 2
 
 
 def sanitize_excel_value(value: Any) -> Any:
@@ -33,6 +38,21 @@ def sanitize_excel_value(value: Any) -> Any:
 def sanitize_excel_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Return a copy of rows with string values safe for openpyxl export."""
     return [{key: sanitize_excel_value(value) for key, value in row.items()} for row in rows]
+
+
+def display_width(value: Any) -> int:
+    """Estimate the rendered width of an Excel cell value."""
+    text = "" if value is None else str(value)
+    return sum(2 if unicodedata.east_asian_width(char) in {"F", "W"} else 1 for char in text)
+
+
+def autofit_excel_columns(writer: pd.ExcelWriter) -> None:
+    """Set worksheet column widths based on current cell contents."""
+    for worksheet in writer.sheets.values():
+        for column_cells in worksheet.columns:
+            max_width = max(display_width(cell.value) for cell in column_cells)
+            adjusted_width = min(max(max_width + EXCEL_COLUMN_PADDING, MIN_EXCEL_COLUMN_WIDTH), MAX_EXCEL_COLUMN_WIDTH)
+            worksheet.column_dimensions[get_column_letter(column_cells[0].column)].width = adjusted_width
 
 
 def unique_excel_sheet_name(name: str, used_names: set[str]) -> str:
@@ -105,3 +125,4 @@ def export_all(rows: list[dict[str, Any]], output_dir: Path, traversed_rows: lis
         pd.DataFrame(build_up_stats(excel_rows)).to_excel(writer, sheet_name="每个UP统计", index=False)
         for sheet_name, up_rows in build_up_video_sheets(traversed_excel_rows):
             pd.DataFrame(up_rows, columns=FIELDS).to_excel(writer, sheet_name=sheet_name, index=False)
+        autofit_excel_columns(writer)
