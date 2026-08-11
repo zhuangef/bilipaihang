@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import re
 from datetime import datetime
 from typing import Any
 
@@ -13,6 +14,7 @@ from utils import duration_to_seconds, ensure_dirs, parse_date_to_ts, read_json,
 
 LOGGER = logging.getLogger(__name__)
 STATE_FILE = settings.cache_dir / "progress_state.json"
+BGM_TITLE_RE = re.compile(r"《([^》]+)》")
 
 
 def parse_args() -> argparse.Namespace:
@@ -30,12 +32,13 @@ def parse_args() -> argparse.Namespace:
 
 
 def extract_bgm_tag_names(detail: dict[str, Any]) -> str:
-    """Return comma-separated tag names whose tag_type is bgm from view/detail data."""
+    """Return comma-separated bgm tag text found inside Chinese title brackets."""
     tags = detail.get("Tags") or detail.get("tags") or []
     return ", ".join(
-        str(tag.get("tag_name"))
+        match
         for tag in tags
         if tag.get("tag_type") == "bgm" and tag.get("tag_name")
+        for match in BGM_TITLE_RE.findall(str(tag.get("tag_name")))
     )
 
 
@@ -99,8 +102,6 @@ def main() -> None:
     done_up_mids = set(state.get("done_up_mids", []))
     rows: list[dict[str, Any]] = state.get("videos", [])
     traversed_rows: list[dict[str, Any]] = state.get("traversed_videos", rows.copy())
-    seen_bvids = {row.get("bvid") for row in rows}
-    seen_traversed_bvids = {row.get("bvid") for row in traversed_rows}
     start_ts = parse_date_to_ts(args.start_date)
 
     client = BiliClient(args.cookie, settings.cache_dir, settings.cache_ttl_seconds, settings.request_interval, settings.retry_times, settings.retry_backoff)
@@ -114,16 +115,13 @@ def main() -> None:
         LOGGER.info("fetching videos for UP %s (%s)", up.get("uname") or up.get("name"), mid)
         for video in client.get_up_videos(mid, settings.page_size, stop_before_ts=start_ts):
             bvid = video.get("bvid")
-            if not bvid or bvid in seen_traversed_bvids:
+            if not bvid:
                 continue
             detail = client.get_video_detail(bvid)
             row = normalize_video(detail, video, up)
-            if bvid not in seen_traversed_bvids:
-                traversed_rows.append(row)
-                seen_traversed_bvids.add(bvid)
+            traversed_rows.append(row)
             if pass_filters(row, args):
                 rows.append(row)
-                seen_bvids.add(bvid)
         done_up_mids.add(mid)
         write_json(STATE_FILE, {"done_up_mids": sorted(done_up_mids), "videos": rows, "traversed_videos": traversed_rows})
 
