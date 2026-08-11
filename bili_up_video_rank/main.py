@@ -128,7 +128,19 @@ def main() -> None:
             if not bvid:
                 LOGGER.info("progress: UP %s/%s video %s/%s skipped because bvid is missing", up_index, total_ups, video_index, total_videos)
                 continue
-            detail = client.get_video_detail(bvid)
+            try:
+                detail = client.get_video_detail(bvid)
+            except Exception as exc:  # noqa: BLE001 - keep one bad video detail from aborting the run
+                LOGGER.warning(
+                    "progress: UP %s/%s video %s/%s failed to fetch detail for bvid=%s: %s; using list data",
+                    up_index,
+                    total_ups,
+                    video_index,
+                    total_videos,
+                    bvid,
+                    exc,
+                )
+                detail = {}
             row = normalize_video(detail, video, up)
             traversed_rows.append(row)
             if pass_filters(row, args):
