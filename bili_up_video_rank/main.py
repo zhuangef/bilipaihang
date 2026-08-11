@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import re
 from datetime import datetime
 from typing import Any
 
@@ -13,6 +14,7 @@ from utils import duration_to_seconds, ensure_dirs, parse_date_to_ts, read_json,
 
 LOGGER = logging.getLogger(__name__)
 STATE_FILE = settings.cache_dir / "progress_state.json"
+BGM_TITLE_RE = re.compile(r"《([^》]+)》")
 
 
 def parse_args() -> argparse.Namespace:
@@ -30,12 +32,13 @@ def parse_args() -> argparse.Namespace:
 
 
 def extract_bgm_tag_names(detail: dict[str, Any]) -> str:
-    """Return comma-separated tag names whose tag_type is bgm from view/detail data."""
+    """Return comma-separated bgm tag text found inside Chinese title brackets."""
     tags = detail.get("Tags") or detail.get("tags") or []
     return ", ".join(
-        str(tag.get("tag_name"))
+        match
         for tag in tags
         if tag.get("tag_type") == "bgm" and tag.get("tag_name")
+        for match in BGM_TITLE_RE.findall(str(tag.get("tag_name")))
     )
 
 
@@ -99,33 +102,75 @@ def main() -> None:
     done_up_mids = set(state.get("done_up_mids", []))
     rows: list[dict[str, Any]] = state.get("videos", [])
     traversed_rows: list[dict[str, Any]] = state.get("traversed_videos", rows.copy())
-    seen_bvids = {row.get("bvid") for row in rows}
-    seen_traversed_bvids = {row.get("bvid") for row in traversed_rows}
     start_ts = parse_date_to_ts(args.start_date)
 
     client = BiliClient(args.cookie, settings.cache_dir, settings.cache_ttl_seconds, settings.request_interval, settings.retry_times, settings.retry_backoff)
     ups = client.get_follow_group_members(args.group_id, settings.page_size)
     LOGGER.info("found %s UPs in group %s", len(ups), args.group_id)
 
-    for up in ups:
+    total_ups = len(ups)
+    for up_index, up in enumerate(ups, start=1):
         mid = int(up.get("mid") or up.get("fid") or 0)
-        if not mid or mid in done_up_mids:
+        up_name = up.get("uname") or up.get("name") or "unknown"
+        if not mid:
+            LOGGER.info("progress: UP %s/%s skipped because mid is missing (%s)", up_index, total_ups, up_name)
             continue
-        LOGGER.info("fetching videos for UP %s (%s)", up.get("uname") or up.get("name"), mid)
-        for video in client.get_up_videos(mid, settings.page_size, stop_before_ts=start_ts):
+        if mid in done_up_mids:
+            LOGGER.info("progress: UP %s/%s skipped because it is already done: %s (%s)", up_index, total_ups, up_name, mid)
+            continue
+        LOGGER.info("progress: UP %s/%s fetching videos for %s (%s)", up_index, total_ups, up_name, mid)
+        up_videos = client.get_up_videos(mid, settings.page_size, stop_before_ts=start_ts)
+        total_videos = len(up_videos)
+        LOGGER.info("progress: UP %s/%s found %s videos for %s (%s)", up_index, total_ups, total_videos, up_name, mid)
+        kept_count = 0
+        for video_index, video in enumerate(up_videos, start=1):
             bvid = video.get("bvid")
-            if not bvid or bvid in seen_traversed_bvids:
+            if not bvid:
+                LOGGER.info("progress: UP %s/%s video %s/%s skipped because bvid is missing", up_index, total_ups, video_index, total_videos)
                 continue
-            detail = client.get_video_detail(bvid)
+            try:
+                detail = client.get_video_detail(bvid)
+            except Exception as exc:  # noqa: BLE001 - keep one bad video detail from aborting the run
+                LOGGER.warning(
+                    "progress: UP %s/%s video %s/%s failed to fetch detail for bvid=%s: %s; using list data",
+                    up_index,
+                    total_ups,
+                    video_index,
+                    total_videos,
+                    bvid,
+                    exc,
+                )
+                detail = {}
             row = normalize_video(detail, video, up)
-            if bvid not in seen_traversed_bvids:
-                traversed_rows.append(row)
-                seen_traversed_bvids.add(bvid)
+            traversed_rows.append(row)
             if pass_filters(row, args):
                 rows.append(row)
-                seen_bvids.add(bvid)
+                kept_count += 1
+                status = "kept"
+            else:
+                status = "filtered"
+            LOGGER.info(
+                "progress: UP %s/%s video %s/%s %s bvid=%s title=%s",
+                up_index,
+                total_ups,
+                video_index,
+                total_videos,
+                status,
+                bvid,
+                row.get("title") or "",
+            )
         done_up_mids.add(mid)
         write_json(STATE_FILE, {"done_up_mids": sorted(done_up_mids), "videos": rows, "traversed_videos": traversed_rows})
+        LOGGER.info(
+            "progress: UP %s/%s done: %s (%s), kept %s/%s videos, output rows=%s",
+            up_index,
+            total_ups,
+            up_name,
+            mid,
+            kept_count,
+            total_videos,
+            len(rows),
+        )
 
     sort_desc = False if args.asc else settings.sort_desc
     rows.sort(key=lambda row: row.get(args.sort_by) or 0, reverse=sort_desc)
