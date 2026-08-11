@@ -152,13 +152,14 @@ def main() -> None:
             else:
                 status = "filtered"
             LOGGER.info(
-                "progress: UP %s/%s video %s/%s %s bvid=%s title=%s",
+                "progress: UP %s/%s video %s/%s %s bvid=%s up_name=%s title=%s",
                 up_index,
                 total_ups,
                 video_index,
                 total_videos,
                 status,
                 bvid,
+                up_name,
                 row.get("title") or "",
             )
         done_up_mids.add(mid)
