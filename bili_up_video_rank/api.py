@@ -131,12 +131,3 @@ class BiliClient:
             {"bvid": bvid},
             use_cache=True,
         ).get("data", {})
-
-    def get_video_tags(self, bvid: str) -> list[dict[str, Any]]:
-        """Return tag metadata for a video, including BGM tags when present."""
-        data = self.get_json(
-            "https://api.bilibili.com/x/tag/archive/tags",
-            {"bvid": bvid},
-            use_cache=True,
-        ).get("data", [])
-        return data if isinstance(data, list) else []

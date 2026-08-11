@@ -9,7 +9,7 @@ from typing import Any
 from api import BiliClient
 from config import settings
 from exporter import export_all
-from utils import duration_to_seconds, ensure_dirs, extract_chinese_book_title, parse_date_to_ts, read_json, setup_logging, write_json
+from utils import duration_to_seconds, ensure_dirs, parse_date_to_ts, read_json, setup_logging, write_json
 
 LOGGER = logging.getLogger(__name__)
 STATE_FILE = settings.cache_dir / "progress_state.json"
@@ -29,15 +29,11 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def normalize_video(detail: dict[str, Any], fallback: dict[str, Any], up: dict[str, Any], tags: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+def normalize_video(detail: dict[str, Any], fallback: dict[str, Any], up: dict[str, Any]) -> dict[str, Any]:
     stat = detail.get("stat", {})
     owner = detail.get("owner", {}) or {"mid": up.get("mid"), "name": up.get("uname") or up.get("name")}
     pubdate = int(detail.get("pubdate") or fallback.get("created") or 0)
     duration = int(detail.get("duration") or duration_to_seconds(fallback.get("length")))
-    tags = tags or []
-    tag_names = [str(tag.get("tag_name") or "") for tag in tags if tag.get("tag_name")]
-    bgm_tag = next((tag for tag in tags if tag.get("tag_type") == "bgm"), {})
-    bgm_tag_name = extract_chinese_book_title(str(bgm_tag.get("tag_name") or "")) if bgm_tag else ""
     return {
         "bvid": detail.get("bvid") or fallback.get("bvid"),
         "aid": detail.get("aid") or fallback.get("aid"),
@@ -56,10 +52,6 @@ def normalize_video(detail: dict[str, Any], fallback: dict[str, Any], up: dict[s
         "danmaku": stat.get("danmaku", 0),
         "share": stat.get("share", 0),
         "url": f"https://www.bilibili.com/video/{detail.get('bvid') or fallback.get('bvid')}",
-        "tags": ",".join(tag_names),
-        "tag_type": bgm_tag.get("tag_type", "") if bgm_tag else "",
-        "music_id": bgm_tag.get("music_id", "") if bgm_tag else "",
-        "tag_name": bgm_tag_name,
         "desc": detail.get("desc", ""),
     }
 
@@ -112,8 +104,7 @@ def main() -> None:
             if not bvid or bvid in seen_traversed_bvids:
                 continue
             detail = client.get_video_detail(bvid)
-            tags = client.get_video_tags(bvid)
-            row = normalize_video(detail, video, up, tags)
+            row = normalize_video(detail, video, up)
             if bvid not in seen_traversed_bvids:
                 traversed_rows.append(row)
                 seen_traversed_bvids.add(bvid)
