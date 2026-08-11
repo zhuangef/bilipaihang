@@ -108,22 +108,57 @@ def main() -> None:
     ups = client.get_follow_group_members(args.group_id, settings.page_size)
     LOGGER.info("found %s UPs in group %s", len(ups), args.group_id)
 
-    for up in ups:
+    total_ups = len(ups)
+    for up_index, up in enumerate(ups, start=1):
         mid = int(up.get("mid") or up.get("fid") or 0)
-        if not mid or mid in done_up_mids:
+        up_name = up.get("uname") or up.get("name") or "unknown"
+        if not mid:
+            LOGGER.info("progress: UP %s/%s skipped because mid is missing (%s)", up_index, total_ups, up_name)
             continue
-        LOGGER.info("fetching videos for UP %s (%s)", up.get("uname") or up.get("name"), mid)
-        for video in client.get_up_videos(mid, settings.page_size, stop_before_ts=start_ts):
+        if mid in done_up_mids:
+            LOGGER.info("progress: UP %s/%s skipped because it is already done: %s (%s)", up_index, total_ups, up_name, mid)
+            continue
+        LOGGER.info("progress: UP %s/%s fetching videos for %s (%s)", up_index, total_ups, up_name, mid)
+        up_videos = client.get_up_videos(mid, settings.page_size, stop_before_ts=start_ts)
+        total_videos = len(up_videos)
+        LOGGER.info("progress: UP %s/%s found %s videos for %s (%s)", up_index, total_ups, total_videos, up_name, mid)
+        kept_count = 0
+        for video_index, video in enumerate(up_videos, start=1):
             bvid = video.get("bvid")
             if not bvid:
+                LOGGER.info("progress: UP %s/%s video %s/%s skipped because bvid is missing", up_index, total_ups, video_index, total_videos)
                 continue
             detail = client.get_video_detail(bvid)
             row = normalize_video(detail, video, up)
             traversed_rows.append(row)
             if pass_filters(row, args):
                 rows.append(row)
+                kept_count += 1
+                status = "kept"
+            else:
+                status = "filtered"
+            LOGGER.info(
+                "progress: UP %s/%s video %s/%s %s bvid=%s title=%s",
+                up_index,
+                total_ups,
+                video_index,
+                total_videos,
+                status,
+                bvid,
+                row.get("title") or "",
+            )
         done_up_mids.add(mid)
         write_json(STATE_FILE, {"done_up_mids": sorted(done_up_mids), "videos": rows, "traversed_videos": traversed_rows})
+        LOGGER.info(
+            "progress: UP %s/%s done: %s (%s), kept %s/%s videos, output rows=%s",
+            up_index,
+            total_ups,
+            up_name,
+            mid,
+            kept_count,
+            total_videos,
+            len(rows),
+        )
 
     sort_desc = False if args.asc else settings.sort_desc
     rows.sort(key=lambda row: row.get(args.sort_by) or 0, reverse=sort_desc)
