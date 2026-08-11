@@ -14,7 +14,7 @@ from utils import write_csv, write_json
 
 FIELDS = [
     "bvid", "aid", "title", "up_mid", "up_name", "pubdate", "pubdate_text", "duration", "duration_text",
-    "view", "favorite", "like", "coin", "reply", "danmaku", "share", "url", "desc",
+    "view", "favorite", "like", "coin", "reply", "danmaku", "share", "url", "tags", "tag_type", "music_id", "tag_name", "desc",
 ]
 
 # Excel files cannot contain most ASCII control characters in cell text.
