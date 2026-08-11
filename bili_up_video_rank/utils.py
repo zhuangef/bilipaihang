@@ -5,7 +5,6 @@ import csv
 import hashlib
 import json
 import logging
-import re
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -80,9 +79,3 @@ def write_csv(path: Path, rows: Iterable[dict[str, Any]], fieldnames: list[str])
         writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
         writer.writeheader()
         writer.writerows(rows)
-
-
-def extract_chinese_book_title(value: str) -> str:
-    """Return the first piece of text enclosed by Chinese book title brackets."""
-    match = re.search(r"《([^》]*)》", value)
-    return match.group(1).strip() if match else ""
