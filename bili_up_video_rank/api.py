@@ -127,7 +127,7 @@ class BiliClient:
 
     def get_video_detail(self, bvid: str) -> dict[str, Any]:
         return self.get_json(
-            "https://api.bilibili.com/x/web-interface/view",
+            "https://api.bilibili.com/x/web-interface/view/detail",
             {"bvid": bvid},
             use_cache=True,
         ).get("data", {})

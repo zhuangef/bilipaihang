@@ -29,17 +29,29 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def extract_bgm_tag_names(detail: dict[str, Any]) -> str:
+    """Return comma-separated tag names whose tag_type is bgm from view/detail data."""
+    tags = detail.get("Tags") or detail.get("tags") or []
+    return ", ".join(
+        str(tag.get("tag_name"))
+        for tag in tags
+        if tag.get("tag_type") == "bgm" and tag.get("tag_name")
+    )
+
+
 def normalize_video(detail: dict[str, Any], fallback: dict[str, Any], up: dict[str, Any]) -> dict[str, Any]:
-    stat = detail.get("stat", {})
-    owner = detail.get("owner", {}) or {"mid": up.get("mid"), "name": up.get("uname") or up.get("name")}
-    pubdate = int(detail.get("pubdate") or fallback.get("created") or 0)
-    duration = int(detail.get("duration") or duration_to_seconds(fallback.get("length")))
+    view = detail.get("View") or detail
+    stat = view.get("stat", {})
+    up_mid = up.get("mid") or up.get("fid")
+    up_name = up.get("uname") or up.get("name")
+    pubdate = int(view.get("pubdate") or fallback.get("created") or 0)
+    duration = int(view.get("duration") or duration_to_seconds(fallback.get("length")))
     return {
-        "bvid": detail.get("bvid") or fallback.get("bvid"),
-        "aid": detail.get("aid") or fallback.get("aid"),
-        "title": detail.get("title") or fallback.get("title"),
-        "up_mid": owner.get("mid"),
-        "up_name": owner.get("name"),
+        "bvid": view.get("bvid") or fallback.get("bvid"),
+        "aid": view.get("aid") or fallback.get("aid"),
+        "title": view.get("title") or fallback.get("title"),
+        "up_mid": up_mid,
+        "up_name": up_name,
         "pubdate": pubdate,
         "pubdate_text": datetime.fromtimestamp(pubdate).strftime("%Y-%m-%d %H:%M:%S") if pubdate else "",
         "duration": duration,
@@ -51,8 +63,9 @@ def normalize_video(detail: dict[str, Any], fallback: dict[str, Any], up: dict[s
         "reply": stat.get("reply", 0),
         "danmaku": stat.get("danmaku", 0),
         "share": stat.get("share", 0),
-        "url": f"https://www.bilibili.com/video/{detail.get('bvid') or fallback.get('bvid')}",
-        "desc": detail.get("desc", ""),
+        "url": f"https://www.bilibili.com/video/{view.get('bvid') or fallback.get('bvid')}",
+        "desc": view.get("desc", ""),
+        "bgm_tag_name": extract_bgm_tag_names(detail),
     }
 
 
