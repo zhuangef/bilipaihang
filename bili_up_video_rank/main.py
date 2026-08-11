@@ -7,7 +7,7 @@ import re
 from datetime import datetime
 from typing import Any
 
-from api import BiliClient
+from api import BiliApiError, BiliClient
 from config import settings
 from exporter import export_all
 from utils import duration_to_seconds, ensure_dirs, parse_date_to_ts, read_json, setup_logging, write_json
@@ -128,7 +128,21 @@ def main() -> None:
             if not bvid:
                 LOGGER.info("progress: UP %s/%s video %s/%s skipped because bvid is missing", up_index, total_ups, video_index, total_videos)
                 continue
-            detail = client.get_video_detail(bvid)
+            try:
+                detail = client.get_video_detail(bvid)
+            except BiliApiError as exc:
+                if exc.code == -404:
+                    LOGGER.info(
+                        "progress: UP %s/%s video %s/%s skipped because detail API returned 404 bvid=%s title=%s",
+                        up_index,
+                        total_ups,
+                        video_index,
+                        total_videos,
+                        bvid,
+                        video.get("title") or "",
+                    )
+                    continue
+                raise
             row = normalize_video(detail, video, up)
             traversed_rows.append(row)
             if pass_filters(row, args):

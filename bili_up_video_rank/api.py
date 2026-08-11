@@ -17,6 +17,10 @@ LOGGER = logging.getLogger(__name__)
 class BiliApiError(RuntimeError):
     """Raised when Bilibili returns an unexpected response."""
 
+    def __init__(self, message: str, code: int | None = None) -> None:
+        super().__init__(message)
+        self.code = code
+
 
 class BiliClient:
     def __init__(self, cookie: str, cache_dir: Path, ttl_seconds: int, interval: float, retries: int, backoff: float) -> None:
@@ -58,10 +62,12 @@ class BiliClient:
                 resp.raise_for_status()
                 data = resp.json()
                 if data.get("code") not in (0, None):
-                    raise BiliApiError(f"API code={data.get('code')}, message={data.get('message')}")
+                    raise BiliApiError(f"API code={data.get('code')}, message={data.get('message')}", code=data.get("code"))
                 write_json(cache_path, data)
                 return data
             except Exception as exc:  # noqa: BLE001 - retry wrapper logs all transient errors
+                if isinstance(exc, BiliApiError) and exc.code == -404:
+                    raise
                 if attempt >= self.retries:
                     raise
                 sleep_for = self.backoff ** (attempt - 1)
