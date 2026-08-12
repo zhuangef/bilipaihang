@@ -2,9 +2,12 @@
 from __future__ import annotations
 
 import logging
+import random
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 import requests
 
@@ -23,26 +26,58 @@ class BiliApiError(RuntimeError):
 
 
 class BiliClient:
-    def __init__(self, cookie: str, cache_dir: Path, ttl_seconds: int, interval: float, retries: int, backoff: float) -> None:
+    def __init__(
+        self,
+        cookie: str,
+        cache_dir: Path,
+        ttl_seconds: int,
+        interval: float,
+        retries: int,
+        backoff: float,
+        jitter: float = 0.2,
+    ) -> None:
         self.cache_dir = cache_dir
         self.ttl_seconds = ttl_seconds
         self.interval = interval
         self.retries = retries
         self.backoff = backoff
+        self.jitter = max(0.0, jitter)
         self.last_request_at = 0.0
-        self.session = requests.Session()
-        self.session.headers.update({
+        self._rate_lock = threading.Lock()
+        self._wbi_lock = threading.Lock()
+        self._thread_local = threading.local()
+        self.headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124 Safari/537.36",
             "Referer": "https://www.bilibili.com/",
             "Cookie": cookie,
-        })
+        }
         self.img_key = ""
         self.sub_key = ""
 
+    @property
+    def session(self) -> requests.Session:
+        session = getattr(self._thread_local, "session", None)
+        if session is None:
+            session = requests.Session()
+            session.headers.update(self.headers)
+            self._thread_local.session = session
+        return session
+
     def _rate_limit(self) -> None:
-        wait = self.interval - (time.time() - self.last_request_at)
-        if wait > 0:
-            time.sleep(wait)
+        """Apply a process-wide minimum request gap with small jitter.
+
+        The lock keeps concurrent detail workers from starting requests in a
+        burst.  This preserves a human-like cadence while allowing network
+        latency to overlap between workers.
+        """
+        with self._rate_lock:
+            elapsed = time.time() - self.last_request_at
+            wait = self.interval - elapsed
+            if wait > 0:
+                time.sleep(wait)
+            if self.jitter:
+                time.sleep(random.uniform(0, self.jitter))
+            self.last_request_at = time.time()
 
     def get_json(self, url: str, params: dict[str, Any] | None = None, use_cache: bool = True, sign: bool = False) -> dict[str, Any]:
         params = dict(params or {})
@@ -58,7 +93,6 @@ class BiliClient:
             try:
                 self._rate_limit()
                 resp = self.session.get(url, params=params, timeout=20)
-                self.last_request_at = time.time()
                 resp.raise_for_status()
                 data = resp.json()
                 if data.get("code") not in (0, None):
@@ -78,10 +112,13 @@ class BiliClient:
     def ensure_wbi_keys(self) -> None:
         if self.img_key and self.sub_key:
             return
-        data = self.get_json("https://api.bilibili.com/x/web-interface/nav", use_cache=False)
-        self.img_key, self.sub_key = extract_wbi_keys(data.get("data", {}))
-        if not self.img_key or not self.sub_key:
-            raise BiliApiError("failed to retrieve WBI keys; check cookie/network")
+        with self._wbi_lock:
+            if self.img_key and self.sub_key:
+                return
+            data = self.get_json("https://api.bilibili.com/x/web-interface/nav", use_cache=False)
+            self.img_key, self.sub_key = extract_wbi_keys(data.get("data", {}))
+            if not self.img_key or not self.sub_key:
+                raise BiliApiError("failed to retrieve WBI keys; check cookie/network")
 
     def get_follow_group_members(self, tagid: int, page_size: int = 50) -> list[dict[str, Any]]:
         members: list[dict[str, Any]] = []
@@ -137,3 +174,21 @@ class BiliClient:
             {"bvid": bvid},
             use_cache=True,
         ).get("data", {})
+
+    def iter_video_details(self, videos: Iterable[dict[str, Any]], max_workers: int = 1) -> Iterable[tuple[dict[str, Any], dict[str, Any] | BiliApiError]]:
+        """Yield video detail results, optionally fetched by safe concurrent workers."""
+        video_list = list(videos)
+        workers = max(1, max_workers)
+        if workers == 1 or len(video_list) <= 1:
+            for video in video_list:
+                yield video, self.get_video_detail(str(video.get("bvid") or ""))
+            return
+
+        def fetch(video: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any] | BiliApiError]:
+            try:
+                return video, self.get_video_detail(str(video.get("bvid") or ""))
+            except BiliApiError as exc:
+                return video, exc
+
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            yield from executor.map(fetch, video_list)

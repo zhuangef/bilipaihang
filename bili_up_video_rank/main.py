@@ -27,6 +27,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--end-date", default=settings.end_date, help="筛选结束发布时间 YYYY-MM-DD")
     parser.add_argument("--min-duration", type=int, default=settings.min_duration, help="最小时长（秒）")
     parser.add_argument("--max-duration", type=int, default=settings.max_duration, help="最大时长（秒）")
+    parser.add_argument("--detail-workers", type=int, default=settings.detail_workers, help="视频详情并发 worker 数；仍受全局限速约束")
+    parser.add_argument("--request-jitter", type=float, default=settings.request_jitter, help="每次请求额外随机等待上限（秒），用于降低固定频率特征")
     parser.add_argument("--reset", action="store_true", help="清空断点状态后重新抓取")
     return parser.parse_args()
 
@@ -72,9 +74,7 @@ def normalize_video(detail: dict[str, Any], fallback: dict[str, Any], up: dict[s
     }
 
 
-def pass_filters(row: dict[str, Any], args: argparse.Namespace) -> bool:
-    start_ts = parse_date_to_ts(args.start_date)
-    end_ts = parse_date_to_ts(args.end_date, end_of_day=True)
+def pass_filters(row: dict[str, Any], start_ts: int | None, end_ts: int | None, args: argparse.Namespace) -> bool:
     if start_ts and row["pubdate"] < start_ts:
         return False
     if end_ts and row["pubdate"] > end_ts:
@@ -104,7 +104,17 @@ def main() -> None:
     traversed_rows: list[dict[str, Any]] = state.get("traversed_videos", rows.copy())
     start_ts = parse_date_to_ts(args.start_date)
 
-    client = BiliClient(args.cookie, settings.cache_dir, settings.cache_ttl_seconds, settings.request_interval, settings.retry_times, settings.retry_backoff)
+    end_ts = parse_date_to_ts(args.end_date, end_of_day=True)
+    detail_workers = max(1, args.detail_workers)
+    client = BiliClient(
+        args.cookie,
+        settings.cache_dir,
+        settings.cache_ttl_seconds,
+        settings.request_interval,
+        settings.retry_times,
+        settings.retry_backoff,
+        args.request_jitter,
+    )
     ups = client.get_follow_group_members(args.group_id, settings.page_size)
     LOGGER.info("found %s UPs in group %s", len(ups), args.group_id)
 
@@ -123,15 +133,17 @@ def main() -> None:
         total_videos = len(up_videos)
         LOGGER.info("progress: UP %s/%s found %s videos for %s (%s)", up_index, total_ups, total_videos, up_name, mid)
         kept_count = 0
-        for video_index, video in enumerate(up_videos, start=1):
+        indexed_videos = [(video_index, video) for video_index, video in enumerate(up_videos, start=1) if video.get("bvid")]
+        missing_bvid_count = total_videos - len(indexed_videos)
+        if missing_bvid_count:
+            LOGGER.info("progress: UP %s/%s skipped %s videos because bvid is missing", up_index, total_ups, missing_bvid_count)
+        detail_stream = client.iter_video_details((video for _, video in indexed_videos), max_workers=detail_workers)
+        video_index_by_bvid = {video.get("bvid"): video_index for video_index, video in indexed_videos}
+        for video, detail_result in detail_stream:
             bvid = video.get("bvid")
-            if not bvid:
-                LOGGER.info("progress: UP %s/%s video %s/%s skipped because bvid is missing", up_index, total_ups, video_index, total_videos)
-                continue
-            try:
-                detail = client.get_video_detail(bvid)
-            except BiliApiError as exc:
-                if exc.code == -404:
+            video_index = video_index_by_bvid.get(bvid, 0)
+            if isinstance(detail_result, BiliApiError):
+                if detail_result.code == -404:
                     LOGGER.info(
                         "progress: UP %s/%s video %s/%s skipped because detail API returned 404 bvid=%s title=%s",
                         up_index,
@@ -142,10 +154,10 @@ def main() -> None:
                         video.get("title") or "",
                     )
                     continue
-                raise
-            row = normalize_video(detail, video, up)
+                raise detail_result
+            row = normalize_video(detail_result, video, up)
             traversed_rows.append(row)
-            if pass_filters(row, args):
+            if pass_filters(row, start_ts, end_ts, args):
                 rows.append(row)
                 kept_count += 1
                 status = "kept"

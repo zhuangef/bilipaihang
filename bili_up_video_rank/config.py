@@ -35,6 +35,8 @@ class Settings:
 
     page_size: int = int(os.getenv("BILI_PAGE_SIZE", "50"))
     request_interval: float = float(os.getenv("BILI_REQUEST_INTERVAL", "1.0"))
+    request_jitter: float = float(os.getenv("BILI_REQUEST_JITTER", "0.2"))
+    detail_workers: int = int(os.getenv("BILI_DETAIL_WORKERS", "2"))
     retry_times: int = int(os.getenv("BILI_RETRY_TIMES", "3"))
     retry_backoff: float = float(os.getenv("BILI_RETRY_BACKOFF", "2.0"))
     cache_ttl_seconds: int = int(os.getenv("BILI_CACHE_TTL_SECONDS", str(7 * 24 * 3600)))
