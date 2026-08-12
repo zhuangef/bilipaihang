@@ -6,7 +6,7 @@
 
 - 自动获取指定关注分组的全部 UP 主。
 - 自动分页遍历每位 UP 的投稿；传入 `start_date` 时遇到更早视频会提前停止，避免无效翻页。
-- 获取每个视频的完整统计数据。
+- 获取每个视频的完整统计数据；视频详情支持低并发预取，并保留全局限速和随机抖动以避免突发请求。
 - 按播放、收藏、点赞、投币、评论、分享、发布时间、时长排序。
 - 支持断点续跑，已完成 UP 不重复抓取。
 - 自动限速与重试，并用本地缓存减少重复请求视频详情。
@@ -51,6 +51,15 @@ python bili_up_video_rank/main.py \
 python bili_up_video_rank/main.py --group-id 123456 --reset
 ```
 
+在网络延迟较高时，可适当开启安全并发。所有 worker 共享全局请求间隔，`--request-jitter` 会增加随机等待，避免固定频率请求；建议从默认值开始，不要盲目调高：
+
+```bash
+python bili_up_video_rank/main.py \
+  --group-id 123456 \
+  --detail-workers 2 \
+  --request-jitter 0.2
+```
+
 ## 配置
 
 可直接编辑 `bili_up_video_rank/config.py`，也可使用环境变量：
@@ -64,6 +73,8 @@ python bili_up_video_rank/main.py --group-id 123456 --reset
 - `BILI_MIN_DURATION`
 - `BILI_MAX_DURATION`
 - `BILI_REQUEST_INTERVAL`
+- `BILI_REQUEST_JITTER`
+- `BILI_DETAIL_WORKERS`
 - `BILI_RETRY_TIMES`
 - `BILI_CACHE_TTL_SECONDS`
 
